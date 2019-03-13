@@ -1,5 +1,5 @@
 from requests import Session, Request
-from datetime import date
+from datetime import datetime
 from lxml import html
 from sys import argv
 
@@ -43,13 +43,13 @@ URL = "https://apps.penguin.bg/fly/quote3.aspx"
 
 def scrape(
     departure_city_code, arrival_city_code,
-    departure_date, return_date=None, passengers=1
+    departure_date, arrival_date=None, passengers=1
         ):
     user_input = {
         "departure_city_code": departure_city_code,
         "arrival_city_code": arrival_city_code,
         "departure_date": departure_date,
-        "return_date": return_date,
+        "arrival_date": arrival_date,
         "passengers": passengers
     }
     if not is_valid_input(**user_input):
@@ -81,38 +81,10 @@ def build_request(session, url, payload=None):
 # TODO complete implementation
 def parse_response(response):
     parsed_body = html.fromstring(response.text)
-    print "i"
-    iframe_elements = parsed_body.xpath("//iframe/@src")
-    if iframe_elements:
-        iframe_url, = iframe_elements
-        if iframe_url:
-            print iframe_url
-            return iframe_url
-    print "t", parsed_body.xpath("//table[@id=\"flywiz_tblQuotes\"]")
-    with open("t.html", "w") as f:
-        f.write(response.text)
-    flights_table, = parsed_body.xpath("//table[@id=\"flywiz_tblQuotes\"]")
-    print flights_table.xpath("./tr/th[@colspan=6]/text()")
-    flights = zip(
-        flights_table.xpath("./tr[contains(@id,'flywiz_rinf')]"),
-        flights_table.xpath("./tr[contains(@id,'flywiz_rprc')]")
-    )
-    flights_info = []
-    flights_info.append([
-        flight[0].xpath("./td/text()")[1:] + flight[1].xpath("./td/text()")
-        for flight in flights
-    ])
-    print flights_table.xpath("./tr[contains(@id,'flywiz_irinf')]")
-    return_flights = zip(
-        flights_table.xpath("./tr[contains(@id,'flywiz_irinf')]"),
-        flights_table.xpath("./tr[contains(@id,'flywiz_irprc')]")
-    )
-    print return_flights
-    if return_flights:
-        flights_info.append([
-            flight[0].xpath("./td/text()")[1:] + flight[1].xpath("./td/text()")
-            for flight in return_flights
-        ])
+    flights_info = parsed_body.xpath(
+        "/html/body/form[@id='form1']/div/table[@id='flywiz']/"
+        "tr/td/table[@id='flywiz_tblQuotes']"
+        )
     return flights_info
 
 
@@ -130,7 +102,7 @@ def parse_user_input(
         "infcount": ""
     }
     if arrival_date:
-        payload["arrdate"] = arrival_date
+        payload["rtdate"] = arrival_date
     return payload
 
 
@@ -145,20 +117,12 @@ def is_valid_input(
             and departure date."""
         result = False
     else:
-        dep_date = date(
-            int(departure_date.split(".")[2]),
-            int(departure_date.split(".")[1]),
-            int(departure_date.split(".")[0])
-        )
-        if date.today() > dep_date:
+        dep_date = datetime.strptime(departure_date, "%d.%m.%Y")
+        if datetime.today() > dep_date:
             print "Departure date must be >= today"
             result = False
         if arrival_date:
-            arr_date = date(
-                int(arrival_date.split(".")[2]),
-                int(arrival_date.split(".")[1]),
-                int(arrival_date.split(".")[0])
-            )
+            arr_date = datetime.strptime(arrival_date, "%d.%m.%Y")
             if arr_date < dep_date:
                 print "Return date must be >= departure date"
                 result = False
@@ -168,4 +132,4 @@ def is_valid_input(
     return result
 
 
-scrape(*argv[1:])
+print scrape(*argv[1:])
