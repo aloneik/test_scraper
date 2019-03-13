@@ -2,43 +2,10 @@ from requests import Session, Request
 from datetime import datetime
 from lxml import html
 from sys import argv
+from itertools import product
 
 
 URL = "https://apps.penguin.bg/fly/quote3.aspx"
-
-
-""" def get_flights(
-    departure_city_code, arrival_city_code,
-    departure_date, arrival_date=None, passengers=1
-        ):
-    print departure_city_code, arrival_city_code
-    print departure_date, arrival_date
-    payload = {
-        "lang": 2,
-        "departure-city": departure_city_code,
-        "arrival-city": arrival_city_code,
-        "reserve-type": "",
-        "departure-date": departure_date,
-        "adults-children": passengers,
-        "search": "Search!"
-    }
-    with requests.Session() as session:
-        session.headers.update(HEADERS)
-        response = session.get(URL, params=payload)
-        if not response.status_code == 200:
-            print "FFFFFFUUUUUCCCCCCCKKKKK"
-            return
-        parsed_body = html.fromstring(response.text)
-        iframe_url, = parsed_body.xpath("//iframe/@src")
-        iframe_response = session.get(iframe_url, params=payload)
-        if not iframe_response.status_code == 200:
-            print "FFFFUUUUUUCCCCCCKKKK222222"
-        print iframe_response.request.headers
-        parsed_iframe = html.fromstring(iframe_response.text)
-        flights_table, = parsed_iframe\
-            .xpath("//table[@id=\"flywiz_tblQuotes\"]")
-        print flights_table.xpath("./tr/th[@colspan=6]/text()")
- """
 
 
 def scrape(
@@ -56,26 +23,19 @@ def scrape(
         return
     session = Session()
     request = build_request(session, URL, parse_user_input(**user_input))
-    result = None
-    try:
-        result = parse_response(session.send(request))
-    # TODO concoct exception types to catch
-    except Exception as e:
-        print e.message
-        # check_errors(...)
-    return result
+    # try:
+    #     result = parse_response(session.send(request))
+    # # TODO find exception types to catch
+    # except Exception as e:
+    #     print e.message
+    #     # check_errors(...)
+    out, ret = parse_response(session.send(request))
+    return process_flights(out, ret, user_input)
 
 
 def build_request(session, url, payload=None):
     request = Request("GET", url, params=payload)
     return session.prepare_request(request)
-
-
-# def fetch_iframe_url(response):
-#     parsed_body = html.fromstring(response.text)
-#     iframe_url, = parsed_body.xpath("//iframe/@src")
-#     if iframe_url:
-#         return iframe_url
 
 
 # TODO complete implementation
@@ -84,8 +44,53 @@ def parse_response(response):
     flights_info = parsed_body.xpath(
         "/html/body/form[@id='form1']/div/table[@id='flywiz']/"
         "tr/td/table[@id='flywiz_tblQuotes']"
-        )
-    return flights_info
+        )[0]
+    outgoing_data = zip(
+        flights_info.xpath("./tr[contains(@id,'flywiz_rinf')]"),
+        flights_info.xpath("./tr[contains(@id,'flywiz_rprc')]")
+    )
+    outgoing_flights = map(parse_flight, outgoing_data)
+    return_data = zip(
+        flights_info.xpath("./tr[contains(@id,'flywiz_irinf')]"),
+        flights_info.xpath("./tr[contains(@id,'flywiz_irprc')]")
+    )
+    return_flights = None
+    if return_data:
+        return_flights = map(parse_flight, return_data)
+    return outgoing_flights, return_flights
+
+
+def parse_flight(flight):
+    (
+        (cb, date, dep_time, arr_time, dep_code, arr_code),
+        (_, price, bag_info)
+    ) = flight
+    amount, currency = price.xpath("./text()")[0].split()[1:]
+    amount = float(amount)
+    date = parse_date(date.xpath("./text()")[0])
+    dep_time = datetime.strptime(dep_time.xpath("./text()")[0], "%H:%M").time()
+    arr_time = datetime.strptime(arr_time.xpath("./text()")[0], "%H:%M").time()
+    next_day = dep_time > arr_time
+    dep_time = datetime.combine(date, dep_time)
+    if next_day:
+        date = datetime(date.year, date.month, date.day + 1)
+    arr_time = datetime.combine(date, arr_time)
+    return {
+        "dep_time": dep_time,
+        "arr_time": arr_time,
+        "arr_code": arr_code.xpath("./text()")[0].split()[1].strip("()"),
+        "dep_code": dep_code.xpath("./text()")[0].split()[1].strip("()"),
+        "price": amount,
+        "currency": currency,
+        "bag_info": bag_info.xpath("./text()")
+    }
+
+
+def parse_date(date):
+    day, month, year = date.split()[1:]
+    if len(day) == 1:
+        day = "0" + day
+    return datetime.strptime("".join([day, month, year]), "%d%b%y").date()
 
 
 def parse_user_input(
@@ -103,7 +108,37 @@ def parse_user_input(
     }
     if arrival_date:
         payload["rtdate"] = arrival_date
+        del payload["ow"]
+        payload["rt"] = ""
     return payload
+
+
+def process_flights(outgoing_flights, return_flights, user_input):
+    outgoing_flights = filter(lambda f: all([
+            f["dep_code"] == user_input["departure_city_code"],
+            f["arr_code"] == user_input["arrival_city_code"],
+            f["dep_time"].date() == datetime.strptime(
+                user_input["departure_date"], "%d.%m.%Y"
+                ).date()
+        ]), outgoing_flights)
+    if user_input["arrival_date"] is None:
+        return sorted(outgoing_flights, key=lambda f: f["price"])
+    return_flights = filter(lambda f: all([
+        f["dep_code"] == user_input["arrival_city_code"],
+        f["arr_code"] == user_input["departure_city_code"],
+        f["dep_time"].date() == datetime.strptime(
+            user_input["arrival_date"], "%d.%m.%Y"
+            ).date()
+    ]), return_flights)
+    flight_options = []
+    for o_flight, r_flight in product(outgoing_flights, return_flights):
+        assert o_flight["currency"] == r_flight["currency"]
+        flight_options.append({
+            "flights": (o_flight, r_flight),
+            "price": o_flight["price"] + r_flight["price"],
+            "currency": o_flight["currency"]
+        })
+    return sorted(flight_options, key=lambda f: f["price"])
 
 
 def is_valid_input(
@@ -131,4 +166,14 @@ if len(argv) < 4:
 Please input departure IATA code, arrival IATA code and departure date."""
     # TODO Give a second chance
     exit()
-print scrape(*argv[1:])
+result = scrape(*argv[1:])
+for option in result:
+    if "flights" in option:
+        print "Return flight: "
+        for flight in option["flights"]:
+            print "    From {dep_code} to {arr_code} departure at {dep_time} "\
+                "arrival at {arr_time}".format(**flight)
+        print "Price: {price} {currency}".format(**option)
+    else:
+        print "From {dep_code} to {arr_code} departure at {dep_time} arrival "\
+            "at {arr_time} price {price} {currency}".format(**option)
