@@ -90,7 +90,7 @@ def parse_response(response):
 
 def parse_user_input(
     departure_city_code, arrival_city_code,
-    departure_date, arrival_date=None, passengers=1
+    departure_date, arrival_date, passengers
         ):
     payload = {
         "ow": "",
@@ -108,28 +108,27 @@ def parse_user_input(
 
 def is_valid_input(
     departure_city_code, arrival_city_code,
-    departure_date, arrival_date=None, passengers=1
+    departure_date, arrival_date, passengers
         ):
     result = True
-    if len(argv) < 4:
-        print """You entered <3 parameters.
-            Please input departure IATA code, arrival IATA code
-            and departure date."""
+    dep_date = datetime.strptime(departure_date, "%d.%m.%Y")
+    if datetime.today() > dep_date:
+        print "Departure date must be >= today"
         result = False
-    else:
-        dep_date = datetime.strptime(departure_date, "%d.%m.%Y")
-        if datetime.today() > dep_date:
-            print "Departure date must be >= today"
+    if arrival_date:
+        arr_date = datetime.strptime(arrival_date, "%d.%m.%Y")
+        if arr_date < dep_date:
+            print "Return date must be >= departure date"
             result = False
-        if arrival_date:
-            arr_date = datetime.strptime(arrival_date, "%d.%m.%Y")
-            if arr_date < dep_date:
-                print "Return date must be >= departure date"
-                result = False
-        if passengers > 8:
-            print "Limit of passengers: 8"
-            result = False
+    if passengers > 8:
+        print "Limit of passengers: 8"
+        result = False
     return result
 
 
+if len(argv) < 4:
+    print """You entered <3 parameters.
+Please input departure IATA code, arrival IATA code and departure date."""
+    # TODO Give a second chance
+    exit()
 print scrape(*argv[1:])
