@@ -9,18 +9,21 @@ URL = "https://apps.penguin.bg/fly/quote3.aspx"
 
 
 def scrape(
-    departure_city_code, arrival_city_code,
+    departure_airport_code, arrival_airport_code,
     departure_date, arrival_date=None, passengers=1
         ):
     user_input = {
-        "departure_city_code": departure_city_code,
-        "arrival_city_code": arrival_city_code,
+        "departure_airport_code": departure_airport_code,
+        "arrival_airport_code": arrival_airport_code,
         "departure_date": departure_date,
         "arrival_date": arrival_date,
         "passengers": passengers
     }
-    if not is_valid_input(**user_input):
-        return
+    is_valid, incorect_params = is_valid_input(**user_input)
+    if not is_valid:
+        user_input.update(reenter_user_parameters(incorect_params))
+        if not is_valid_input(**user_input)[0]:
+            return
     session = Session()
     request = build_request(session, URL, parse_user_input(**user_input))
     # try:
@@ -29,8 +32,13 @@ def scrape(
     # except Exception as e:
     #     print e.message
     #     # check_errors(...)
-    out, ret = parse_response(session.send(request))
+    response = session.send(request)
+    out, ret = parse_response(response)
     return process_flights(out, ret, user_input)
+
+
+def check_errors(exception, responce):
+    pass
 
 
 def build_request(session, url, payload=None):
@@ -38,7 +46,6 @@ def build_request(session, url, payload=None):
     return session.prepare_request(request)
 
 
-# TODO complete implementation
 def parse_response(response):
     parsed_body = html.fromstring(response.text)
     flights_info = parsed_body.xpath(
@@ -94,15 +101,15 @@ def parse_date(date):
 
 
 def parse_user_input(
-    departure_city_code, arrival_city_code,
+    departure_airport_code, arrival_airport_code,
     departure_date, arrival_date, passengers
         ):
     payload = {
         "ow": "",
         "lang": "en",
         "depdate": departure_date,
-        "aptcode1": departure_city_code,
-        "aptcode2": arrival_city_code,
+        "aptcode1": departure_airport_code,
+        "aptcode2": arrival_airport_code,
         "paxcount": passengers,
         "infcount": ""
     }
@@ -113,10 +120,20 @@ def parse_user_input(
     return payload
 
 
+def reenter_user_parameters(incorect_params):
+    updated_parameters = {}
+    for param in incorect_params:
+        print param["error_msg"]
+        answer = raw_input("Do You want to enter other value?(y/n) ")
+        if answer == "y":
+            updated_parameters[param["param"]] = raw_input("Enter new value: ")
+    return updated_parameters
+
+
 def process_flights(outgoing_flights, return_flights, user_input):
     outgoing_flights = filter(lambda f: all([
-            f["dep_code"] == user_input["departure_city_code"],
-            f["arr_code"] == user_input["arrival_city_code"],
+            f["dep_code"] == user_input["departure_airport_code"],
+            f["arr_code"] == user_input["arrival_airport_code"],
             f["dep_time"].date() == datetime.strptime(
                 user_input["departure_date"], "%d.%m.%Y"
                 ).date()
@@ -124,8 +141,8 @@ def process_flights(outgoing_flights, return_flights, user_input):
     if user_input["arrival_date"] is None:
         return sorted(outgoing_flights, key=lambda f: f["price"])
     return_flights = filter(lambda f: all([
-        f["dep_code"] == user_input["arrival_city_code"],
-        f["arr_code"] == user_input["departure_city_code"],
+        f["dep_code"] == user_input["arrival_airport_code"],
+        f["arr_code"] == user_input["departure_airport_code"],
         f["dep_time"].date() == datetime.strptime(
             user_input["arrival_date"], "%d.%m.%Y"
             ).date()
@@ -142,31 +159,75 @@ def process_flights(outgoing_flights, return_flights, user_input):
 
 
 def is_valid_input(
-    departure_city_code, arrival_city_code,
+    departure_airport_code, arrival_airport_code,
     departure_date, arrival_date, passengers
         ):
     result = True
+    incorect_params = []
+    if (
+        not departure_airport_code.isalpha()
+        or not departure_airport_code.isupper()
+        or len(departure_airport_code) != 3
+            ):
+        error_msg = "Departure airport code must be three upper letters. "\
+            "Exapmle:'CPH'. You entered {}".format(departure_airport_code)
+        incorect_params.append({
+            "param": "departure_airport_code",
+            "error_msg": error_msg
+        })
+    if (
+        not arrival_airport_code.isalpha()
+        or not arrival_airport_code.isupper()
+        or len(arrival_airport_code) != 3
+            ):
+        error_msg = "Arrival airport code must be three upper letters. "\
+            "Exapmle:'VAR'. You entered {}".format(arrival_airport_code)
+        incorect_params.append({
+            "param": "arrival_airport_code",
+            "error_msg": error_msg
+        })
     dep_date = datetime.strptime(departure_date, "%d.%m.%Y")
     if datetime.today() > dep_date:
-        print "Departure date must be >= today"
-        result = False
+        error_msg = "Departure date({}) must be >= today({})".format(
+            dep_date.strftime("%d.%m.%Y"),
+            datetime.today().strftime("%d.%m.%Y")
+            )
+        incorect_params.append({
+            "param": "departure_date",
+            "error_msg": error_msg
+            })
     if arrival_date:
         arr_date = datetime.strptime(arrival_date, "%d.%m.%Y")
         if arr_date < dep_date:
-            print "Return date must be >= departure date"
-            result = False
-    if passengers > 8:
-        print "Limit of passengers: 8"
+            error_msg = "Return date({}) must be >= departure date({})".format(
+                arr_date.strftime("%d.%m.%Y"),
+                dep_date.strftime("%d.%m.%Y")
+            )
+            incorect_params.append({
+                "param": "arrival_date",
+                "error_msg": error_msg
+            })
+    passengers = int(passengers)
+    if passengers < 1 or passengers > 8:
+        error_msg = "Passengers count must be from 1 to 8. "\
+            "You entered {}".format(passengers)
+        incorect_params.append({
+            "param": "passengers",
+            "error_msg": error_msg
+        })
+    if len(incorect_params) > 0:
         result = False
-    return result
+    return result, incorect_params
 
 
 if len(argv) < 4:
     print """You entered <3 parameters.
 Please input departure IATA code, arrival IATA code and departure date."""
-    # TODO Give a second chance
     exit()
 result = scrape(*argv[1:])
+if result is None:
+    print "Flights on your request not found"
+    exit()
 for option in result:
     if "flights" in option:
         print "Return flight: "
