@@ -1,5 +1,5 @@
 from requests import Session, Request, ConnectionError
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from lxml import html
 from sys import argv
 from itertools import product
@@ -42,11 +42,14 @@ def scrape(
     return result
 
 
-def check_errors(exception, responce):
+def check_errors(exception, response):
     if isinstance(exception, ConnectionError):
         print "Server is not available. Check your network connection"
+    if response.status_code != 200:
+        print "Bad response"
     if isinstance(exception, IndexError):
-        print "No data parsed"
+        if "internal error occurred" in response.text:
+            print "An internal error occurred. Please retry your request."
 
 
 def build_request(session, url, user_input):
@@ -114,11 +117,11 @@ def parse_flight(flight):
 
 def reenter_user_parameters(incorrect_params):
     updated_parameters = {}
-    for param in incorrect_params:
-        print param["error_msg"]
+    for param, error_msg in incorrect_params.items():
+        print error_msg
         answer = raw_input("Do You want to enter other value?(y/n) ")
         if answer == "y":
-            updated_parameters[param["param"]] = raw_input("Enter new value: ")
+            updated_parameters[param] = raw_input("Enter new value: ")
     return updated_parameters
 
 
@@ -150,89 +153,42 @@ def process_flights(outgoing_flights, return_flights, user_input):
     return sorted(flight_options, key=lambda f: f["price"])
 
 
-def validate_airport_codes(departure_airport_code, arrival_airport_code):
-    incorrect_params = []
-    if not IATA_CODE_RE.match(departure_airport_code):
-        incorrect_params.append({
-            "param": "departure_airport_code",
-            "error_msg": "Invalid departure code. "
-            "It must be 3 capital letters code"
-        })
-    if not IATA_CODE_RE.match(arrival_airport_code):
-        incorrect_params.append({
-            "param": "arrival_airport_code",
-            "error_msg": "Invalid arrival code. "
-            "It must be 3 capital letters code"
-        })
-    return incorrect_params
-
-
-def validate_departure_date(departure_date):
-    incorrect_params = []
-    if not DATE_FORMAT_RE.match(departure_date):
-        incorrect_params.append({
-            "param": "departure_date",
-            "error_msg": "Invalid departure date format. "
-            "it must be dd.mm.yyyy"
-        })
-    else:
-        dep_date = datetime.strptime(departure_date, "%d.%m.%Y")
-        if dep_date < datetime.today():
-            incorrect_params.append({
-                "param": "departure_date",
-                "error_msg": "Departure date({}) must not be in past".format(
-                    dep_date.strftime("%d.%m.%Y")
-                )
-            })
-    return incorrect_params
-
-
-def validate_arrival_date(departure_date, arrival_date):
-    incorrect_params = []
-    if not DATE_FORMAT_RE.match(arrival_date):
-        incorrect_params.append({
-            "param": "arrival_date",
-            "error_msg": "Invalid arrival date format. "
-            "it must be dd.mm.yyyy"
-        })
-    elif arrival_date:
-        dep_date = datetime.strptime(departure_date, "%d.%m.%Y")
-        arr_date = datetime.strptime(arrival_date, "%d.%m.%Y")
-        if arr_date < dep_date:
-            incorrect_params.append({
-                "param": "arrival_date",
-                "error_msg": "Return date({}) must be after "
-                "departure date({})".format(
-                    arr_date.strftime("%d.%m.%Y"),
-                    dep_date.strftime("%d.%m.%Y")
-                )
-            })
-    return incorrect_params
+def is_date_less(first_date, second_date, format="%d.%m.%Y"):
+    if not isinstance(first_date, date):
+        first_date = datetime.strptime(first_date, format).date()
+    if not isinstance(second_date, date):
+        second_date = datetime.strptime(second_date, format).date()
+    return first_date < second_date
 
 
 def is_valid_input(
     departure_airport_code, arrival_airport_code,
     departure_date, arrival_date, passengers
 ):
-    result = True
-    incorrect_params = []
+    incorrect_params = {}
     # TODO: refactor dates and codes validation
-    incorrect_params.extend(
-        validate_airport_codes(departure_airport_code, arrival_airport_code)
-    )
-    departure_date_errors = validate_departure_date(departure_date)
-    incorrect_params.extend(departure_date_errors)
-    if len(departure_date_errors) == 0:
-        incorrect_params.extend(
-            validate_arrival_date(departure_date, arrival_date)
-        )
-    passengers = int(passengers)
-    if 1 > passengers > 8:
-        incorrect_params.append({
-            "param": "passengers",
-            "error_msg": "Passengers count must be from 1 to 8. "
-            "You entered {}".format(passengers)
-        })
+    if not IATA_CODE_RE.match(departure_airport_code):
+        incorrect_params["departure_airport_code"] = "Invalid departure code."
+        " It must be 3 capital letters code."
+    if not IATA_CODE_RE.match(arrival_airport_code):
+        incorrect_params["arrival_airport_code"] = "Invalid arrival code."
+        " It must be 3 capital letters code."
+    if not DATE_FORMAT_RE.match(departure_date):
+        incorrect_params["departure_date"] = "Departure date format must "
+        "be dd.mm.yyyy"
+    elif not is_date_less(datetime.today().date(), departure_date):
+        incorrect_params["deaprture_date"] = "Departure date mustn't "
+        "be in past"
+    elif arrival_date:
+        if not DATE_FORMAT_RE.match(arrival_date):
+            incorrect_params["arrival_date"] = "Arrival date format must "
+            "be dd.mm.yyyy"
+        elif not is_date_less(departure_date, arrival_date):
+            incorrect_params["arrival_date"] = "Arrival date must be after "
+            "departure date"
+    if not (1 <= int(passengers) <= 8):
+        incorrect_params["passengers"] = "Passengers count must be from 1 to 8"
+    result = True
     if len(incorrect_params) > 0:
         result = False
     return result, incorrect_params
