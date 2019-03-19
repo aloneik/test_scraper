@@ -8,36 +8,33 @@ from re import compile
 
 URL = "https://apps.penguin.bg/fly/quote3.aspx"
 IATA_CODE_RE = compile(r"^[A-Z]{3}$")
-DATE_FORMAT_RE = compile(r"\d{2}\.\d{2}\.\d{4}")
+DATE_FORMAT_RE = compile(r"^\d{2}\.\d{2}\.\d{4}$")
 
 
 def scrape(
     departure_airport_code, arrival_airport_code,
-    departure_date, arrival_date=None, passengers=1
-):
+    departure_date, arrival_date=None
+        ):
     user_input = {
         "departure_airport_code": departure_airport_code,
         "arrival_airport_code": arrival_airport_code,
         "departure_date": departure_date,
-        "arrival_date": arrival_date,
-        "passengers": passengers
+        "arrival_date": arrival_date
     }
-    is_valid, incorrect_params = is_valid_input(**user_input)
-    if not is_valid:
+    incorrect_params = is_valid_input(**user_input)
+    while len(incorrect_params) > 0:
         user_input.update(reenter_user_parameters(incorrect_params))
+        incorrect_params = is_valid_input(**user_input)
     session = Session()
     request = build_request(session, URL, user_input)
     out, ret, response = None, None, None
-    is_request_succesfull = True
+    result = None
     try:
         response = session.send(request)
         out, ret = parse_response(response)
     except Exception as e:
-        is_request_succesfull = False
-        print e.message
         check_errors(e, response)
-    result = None
-    if is_request_succesfull:
+    else:
         result = process_flights(out, ret, user_input)
     return result
 
@@ -45,11 +42,13 @@ def scrape(
 def check_errors(exception, response):
     if isinstance(exception, ConnectionError):
         print "Server is not available. Check your network connection"
-    if response.status_code != 200:
+    elif response.status_code != 200:
         print "Bad response"
-    if isinstance(exception, IndexError):
+    elif isinstance(exception, IndexError):
         if "internal error occurred" in response.text:
             print "An internal error occurred. Please retry your request."
+    elif isinstance(exception, AssertionError):
+        print "Outgoing and return flights prices are in different currencies"
 
 
 def build_request(session, url, user_input):
@@ -59,7 +58,7 @@ def build_request(session, url, user_input):
         "depdate": user_input["departure_date"],
         "aptcode1": user_input["departure_airport_code"],
         "aptcode2": user_input["arrival_airport_code"],
-        "paxcount": user_input["passengers"],
+        "paxcount": 1,
         "infcount": ""
     }
     if user_input["arrival_date"] is not None:
@@ -85,23 +84,23 @@ def parse_response(response):
         flights_info.xpath("./tr[contains(@id,'flywiz_irinf')]"),
         flights_info.xpath("./tr[contains(@id,'flywiz_irprc')]")
     )
-    return_flights = None if return_data is None else map(
+    return_flights = None if not return_data else map(
         parse_flight, return_data)
     return outgoing_flights, return_flights
 
 
 def parse_flight(flight):
     (
-        (cb, date, dep_time, arr_time, dep_code, arr_code),
+        (_, flight_date, dep_time, arr_time, dep_code, arr_code),
         (_, price, bag_info)
     ) = flight
-    amount, currency = price.xpath("./text()")[0].split()[1:]
+    _, amount, currency = price.xpath("./text()")[0].split()
     amount = float(amount)
-    date = date.xpath("./text()")[0]  # "%a, %d %b %y"
+    flight_date = flight_date.xpath("./text()")[0]  # "%a, %d %b %y"
     dep_time = datetime.strptime(
-        date + dep_time.xpath("./text()")[0], "%a, %d %b %y%H:%M")
+        flight_date + dep_time.xpath("./text()")[0], "%a, %d %b %y%H:%M")
     arr_time = datetime.strptime(
-        date + arr_time.xpath("./text()")[0], "%a, %d %b %y%H:%M")
+        flight_date + arr_time.xpath("./text()")[0], "%a, %d %b %y%H:%M")
     if arr_time < dep_time:
         arr_time += timedelta(days=1)
     return {
@@ -122,26 +121,34 @@ def reenter_user_parameters(incorrect_params):
         answer = raw_input("Do You want to enter other value?(y/n) ")
         if answer == "y":
             updated_parameters[param] = raw_input("Enter new value: ")
+        elif answer == "n":
+            continue
     return updated_parameters
 
 
 def process_flights(outgoing_flights, return_flights, user_input):
-    outgoing_flights = filter(lambda f: all([
-        f["dep_code"] == user_input["departure_airport_code"],
-        f["arr_code"] == user_input["arrival_airport_code"],
-        f["dep_time"].date() == datetime.strptime(
-            user_input["departure_date"], "%d.%m.%Y"
-        ).date()
-    ]), outgoing_flights)
+    outgoing_flights = [
+        flight for flight in outgoing_flights
+        if all([
+            flight["dep_code"] == user_input["departure_airport_code"],
+            flight["arr_code"] == user_input["arrival_airport_code"],
+            flight["dep_time"].date() == datetime.strptime(
+                user_input["departure_date"], "%d.%m.%Y"
+            ).date()
+        ])
+    ]
     if user_input["arrival_date"] is None:
         return sorted(outgoing_flights, key=lambda f: f["price"])
-    return_flights = filter(lambda f: all([
-        f["dep_code"] == user_input["arrival_airport_code"],
-        f["arr_code"] == user_input["departure_airport_code"],
-        f["dep_time"].date() == datetime.strptime(
-            user_input["arrival_date"], "%d.%m.%Y"
-        ).date()
-    ]), return_flights)
+    return_flights = [
+        flight for flight in return_flights
+        if all([
+            flight["dep_code"] == user_input["arrival_airport_code"],
+            flight["arr_code"] == user_input["departure_airport_code"],
+            flight["dep_time"].date() == datetime.strptime(
+                user_input["arrival_date"], "%d.%m.%Y"
+            ).date()
+        ])
+    ]
     flight_options = []
     for o_flight, r_flight in product(outgoing_flights, return_flights):
         assert o_flight["currency"] == r_flight["currency"]
@@ -163,43 +170,37 @@ def is_date_less(first_date, second_date, format="%d.%m.%Y"):
 
 def is_valid_input(
     departure_airport_code, arrival_airport_code,
-    departure_date, arrival_date, passengers
-):
+    departure_date, arrival_date
+        ):
     incorrect_params = {}
-    # TODO: refactor dates and codes validation
     if not IATA_CODE_RE.match(departure_airport_code):
-        incorrect_params["departure_airport_code"] = "Invalid departure code."
-        " It must be 3 capital letters code."
+        incorrect_params["departure_airport_code"] = "Invalid departure code."\
+            " It must be 3 capital letters code."
     if not IATA_CODE_RE.match(arrival_airport_code):
-        incorrect_params["arrival_airport_code"] = "Invalid arrival code."
-        " It must be 3 capital letters code."
+        incorrect_params["arrival_airport_code"] = "Invalid arrival code."\
+            " It must be 3 capital letters code."
     if not DATE_FORMAT_RE.match(departure_date):
-        incorrect_params["departure_date"] = "Departure date format must "
-        "be dd.mm.yyyy"
-    elif not is_date_less(datetime.today().date(), departure_date):
-        incorrect_params["deaprture_date"] = "Departure date mustn't "
-        "be in past"
-    elif arrival_date:
-        if not DATE_FORMAT_RE.match(arrival_date):
-            incorrect_params["arrival_date"] = "Arrival date format must "
+        incorrect_params["departure_date"] = "Departure date format must "\
             "be dd.mm.yyyy"
+    elif not is_date_less(datetime.today().date(), departure_date):
+        incorrect_params["departure_date"] = "Departure date mustn't "\
+            "be in past"
+    elif arrival_date is not None:
+        if not DATE_FORMAT_RE.match(arrival_date):
+            incorrect_params["arrival_date"] = "Arrival date format must "\
+                "be dd.mm.yyyy"
         elif not is_date_less(departure_date, arrival_date):
-            incorrect_params["arrival_date"] = "Arrival date must be after "
-            "departure date"
-    if not (1 <= int(passengers) <= 8):
-        incorrect_params["passengers"] = "Passengers count must be from 1 to 8"
-    result = True
-    if len(incorrect_params) > 0:
-        result = False
-    return result, incorrect_params
+            incorrect_params["arrival_date"] = "Arrival date must be after "\
+                "departure date"
+    return incorrect_params
 
 
 if len(argv) < 4:
     print """You entered <3 parameters.
 Please input departure IATA code, arrival IATA code and departure date."""
     exit()
-result = scrape(*argv[1:])
-if result is None or len(result) == 0:
+result = scrape(*argv[1:5])
+if not result:
     print "Flights on your request not found"
     exit()
 for option in result:
