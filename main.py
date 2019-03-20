@@ -11,6 +11,11 @@ IATA_CODE_RE = compile(r"^[A-Z]{3}$")
 DATE_FORMAT_RE = compile(r"^\d{2}\.\d{2}\.\d{4}$")
 
 
+class NoAvailableFlightsError(Exception):
+    def __init__(self, *args, **kwargs):
+        Exception.__init__(self, *args, **kwargs)
+
+
 def scrape(
     departure_airport_code, arrival_airport_code,
     departure_date, arrival_date=None
@@ -32,10 +37,9 @@ def scrape(
     try:
         response = session.send(request)
         out, ret = parse_response(response)
+        result = process_flights(out, ret, user_input)
     except Exception as e:
         check_errors(e, response)
-    else:
-        result = process_flights(out, ret, user_input)
     return result
 
 
@@ -47,8 +51,11 @@ def check_errors(exception, response):
     elif isinstance(exception, IndexError):
         if "internal error occurred" in response.text:
             print "An internal error occurred. Please retry your request."
+    elif isinstance(exception, NoAvailableFlightsError):
+        print "No available flights"
     elif isinstance(exception, AssertionError):
-        print "Outgoing and return flights prices are in different currencies"
+        print "Outgoing and return flights prices are in different "\
+            "currencies"
 
 
 def build_request(session, url, user_input):
@@ -96,7 +103,7 @@ def parse_flight(flight):
     ) = flight
     _, amount, currency = price.xpath("./text()")[0].split()
     amount = float(amount)
-    flight_date = flight_date.xpath("./text()")[0]  # "%a, %d %b %y"
+    flight_date = flight_date.xpath("./text()")[0]
     dep_time = datetime.strptime(
         flight_date + dep_time.xpath("./text()")[0], "%a, %d %b %y%H:%M")
     arr_time = datetime.strptime(
@@ -118,15 +125,14 @@ def reenter_user_parameters(incorrect_params):
     updated_parameters = {}
     for param, error_msg in incorrect_params.items():
         print error_msg
-        answer = raw_input("Do You want to enter other value?(y/n) ")
-        if answer == "y":
-            updated_parameters[param] = raw_input("Enter new value: ")
-        elif answer == "n":
-            continue
+        inp = raw_input("Enter new value: ")
+        updated_parameters[param] = inp
     return updated_parameters
 
 
 def process_flights(outgoing_flights, return_flights, user_input):
+    if outgoing_flights is None:
+        raise NoAvailableFlightsError()
     outgoing_flights = [
         flight for flight in outgoing_flights
         if all([
@@ -139,6 +145,8 @@ def process_flights(outgoing_flights, return_flights, user_input):
     ]
     if user_input["arrival_date"] is None:
         return sorted(outgoing_flights, key=lambda f: f["price"])
+    if return_flights is None:
+        raise NoAvailableFlightsError()
     return_flights = [
         flight for flight in return_flights
         if all([
