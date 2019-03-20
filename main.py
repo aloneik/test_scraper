@@ -12,8 +12,7 @@ DATE_FORMAT_RE = compile(r"^\d{2}\.\d{2}\.\d{4}$")
 
 
 class NoAvailableFlightsError(Exception):
-    def __init__(self, *args, **kwargs):
-        Exception.__init__(self, *args, **kwargs)
+    pass
 
 
 def scrape(
@@ -193,6 +192,12 @@ def is_valid_input(
     elif not is_date_less(datetime.today().date(), departure_date):
         incorrect_params["departure_date"] = "Departure date mustn't "\
             "be in past"
+    elif is_date_less(
+        datetime.today().replace(year=datetime.today().year + 1).date(),
+        departure_date
+            ):
+        incorrect_params["departure_date"] = "Departure date should not be "\
+            "more than a year in future"
     elif arrival_date is not None:
         if not DATE_FORMAT_RE.match(arrival_date):
             incorrect_params["arrival_date"] = "Arrival date format must "\
