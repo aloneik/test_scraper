@@ -208,21 +208,24 @@ def is_valid_input(
     return incorrect_params
 
 
-if len(argv) < 4:
-    print """You entered <3 parameters.
-Please input departure IATA code, arrival IATA code and departure date."""
-    exit()
-result = scrape(*argv[1:5])
-if not result:
-    print "Flights on your request not found"
-    exit()
-for option in result:
-    if "flights" in option:
-        print "Return flight: "
-        for flight in option["flights"]:
-            print "    From {dep_code} to {arr_code} departure at {dep_time} "\
-                "arrival at {arr_time}".format(**flight)
-        print "Price: {price} {currency}".format(**option)
-    else:
-        print "From {dep_code} to {arr_code} departure at {dep_time} arrival "\
-            "at {arr_time} price {price} {currency}".format(**option)
+if __name__ == "__main__":
+    if len(argv) < 4:
+        print "You entered <3 parameters. Please input departure IATA code, "\
+            "arrival IATA code and departure date."
+        exit()
+    result = scrape(*argv[1:5])
+    if not result:
+        print "Flights on your request not found"
+        exit()
+    for option in result:
+        if "flights" in option:
+            print "Return flight: "
+            for flight in option["flights"]:
+                print "    From {dep_code} to {arr_code} departure at "\
+                    "{dep_time} arrival at {arr_time}".format(**flight)
+            print "Price: {price} {currency}".format(**option)
+        else:
+            print "From {dep_code} to {arr_code} departure at {dep_time} "\
+                "arrival at {arr_time} price {price} {currency}".format(
+                    **option
+                    )
