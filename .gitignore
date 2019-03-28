@@ -1,3 +1,6 @@
 .vscode/*
 *.pyc
 test.py
+main.1.py
+*.sqlite
+*.txt

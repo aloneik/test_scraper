@@ -37,10 +37,10 @@ def scrape(user_input=None):
     """
     if not user_input:
         user_input = parse_input()
-    incorrect_params = is_valid_input(user_input)
+    incorrect_params = validate_input(user_input)
     while len(incorrect_params) > 0:
         user_input.update(reenter_user_parameters(incorrect_params))
-        incorrect_params = is_valid_input(user_input)
+        incorrect_params = validate_input(user_input)
     try:
         response = get(URL, params=build_request_payload(user_input))
         out, ret = parse_response(response)
@@ -163,7 +163,10 @@ def process_flights(outgoing_flights, return_flights, user_input):
         ])
     ]
     if not outgoing_flights:
-        raise NoSuitableFlightsError()
+        if user_input["arrival_date"]:
+            pass
+        else:
+            raise NoSuitableFlightsError()
 
     if not user_input["arrival_date"]:
         return sorted(outgoing_flights, key=lambda f: f["price"])
@@ -192,41 +195,65 @@ def process_flights(outgoing_flights, return_flights, user_input):
     return sorted(flight_options, key=lambda f: f["price"])
 
 
-def is_valid_input(user_input):
+def _try_convert_date(date):
+    if isinstance(date, dt.date):
+        return date
+    conversion_res = None
+    try:
+        conversion_res = dt.datetime.strptime(date, "%d.%m.%Y").date()
+    except ValueError:
+        pass
+    return conversion_res
+
+
+def _check_date_constraints(date, key, user_input):
+    incorrects = {}
+
+    min_search_date = dt.datetime.today().date()
+    max_search_date = min_search_date + dt.timedelta(days=365)
+
+    date_format_msg = "{} format must be dd.mm.yyyy"
+    date_constraint_msg = "{} mustn't be in past and should not be more "\
+        "than a year in future."
+
+    date_type = key.capitalize().replace("_", " ")
+    if not date:
+        incorrects[key] = date_format_msg.format(date_type)
+    elif date < min_search_date or date > max_search_date:
+        incorrects[key] = date_constraint_msg.format(date_type)
+
+    return incorrects
+
+
+def validate_input(user_input):
     """Validate user's input.
 
         Return dict with incorrect parameters.
     """
     incorrect_params = {}
+
     for key in ("departure_airport_code", "arrival_airport_code"):
         if not IATA_CODE_RE.match(user_input[key]):
-            incorrect_params["departure_airport_code"] = "{} must be 3 "\
+            incorrect_params[key] = "{} must be 3 "\
                 "capital letters code.".format(
                     key.capitalize().replace("_", " ")
                     )
-    try:
-        for key in ("departure_date", "arrival_date"):
-            if (user_input[key] and
-                    not isinstance(user_input[key], dt.date)):
-                user_input[key] = dt.datetime.strptime(
-                    user_input[key], "%d.%m.%Y").date()
-    except ValueError:
-        incorrect_params[key] = "{} format must "\
-            "be dd.mm.yyyy".format(key.capitalize().replace("_", " "))
+
+    for key in ("departure_date", "arrival_date"):
+        if user_input[key] is None:
+            break
+        date = _try_convert_date(user_input[key])
+        incorrect_date = _check_date_constraints(date, key, user_input)
+        if incorrect_date:
+            incorrect_params.update(incorrect_date)
+            break
+        elif date:
+            user_input[key] = date
     else:
-        if dt.datetime.today().date() > user_input["departure_date"]:
-            incorrect_params["departure_date"] = "Departure date mustn't "\
-                "be in past"
-        elif (dt.datetime.today().replace(
-                    year=dt.datetime.today().year + 1
-                ).date()
-                < user_input["departure_date"]):
-            incorrect_params["departure_date"] = "Departure date should not "\
-                "be more than a year in future"
-        if (user_input["arrival_date"]
-                and user_input["departure_date"] > user_input["arrival_date"]):
+        if user_input["arrival_date"] < user_input["departure_date"]:
             incorrect_params["arrival_date"] = "Arrival date must be "\
                 "after departure date"
+
     return incorrect_params
 
 
@@ -262,4 +289,4 @@ def print_result(result):
 
 
 if __name__ == "__main__":
-    scrape()
+    print scrape()
