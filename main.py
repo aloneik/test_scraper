@@ -163,10 +163,10 @@ def process_flights(outgoing_flights, return_flights, user_input):
         ])
     ]
     if not outgoing_flights:
-        if user_input["arrival_date"]:
-            pass
-        else:
+        if not user_input["arrival_date"]:
             raise NoSuitableFlightsError()
+        else:
+            raise NoOugoingFlightsError()
 
     if not user_input["arrival_date"]:
         return sorted(outgoing_flights, key=lambda f: f["price"])
@@ -206,7 +206,7 @@ def _try_convert_date(date):
     return conversion_res
 
 
-def _check_date_constraints(date, key, user_input):
+def _check_date_constraints(date, key):
     incorrects = {}
 
     min_search_date = dt.datetime.today().date()
@@ -243,7 +243,7 @@ def validate_input(user_input):
         if user_input[key] is None:
             break
         date = _try_convert_date(user_input[key])
-        incorrect_date = _check_date_constraints(date, key, user_input)
+        incorrect_date = _check_date_constraints(date, key)
         if incorrect_date:
             incorrect_params.update(incorrect_date)
             break
@@ -289,4 +289,4 @@ def print_result(result):
 
 
 if __name__ == "__main__":
-    print scrape()
+    scrape()
