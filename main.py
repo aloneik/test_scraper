@@ -51,6 +51,7 @@ def scrape(user_input=None):
         print "Outgoing and return flights prices are in different currencies"
     except Exception as ex:
         print str(ex)
+        print "Exception type:", ex.__class__.__name__
     else:
         print_result(result)
 
